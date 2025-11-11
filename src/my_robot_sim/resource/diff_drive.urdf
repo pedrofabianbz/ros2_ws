@@ -60,11 +60,11 @@
         <pose relative_to="lidar">0 0 0 0 0 0</pose>
         <ignition_frame_id>lidar</ignition_frame_id>
         <topic>scan</topic>
-        <update_rate>10</update_rate>
+        <update_rate>30</update_rate>
         <ray>
             <scan>
             <horizontal>
-                <samples>640</samples>
+                <samples>360</samples>
                 <resolution>1</resolution>
                 <min_angle>-3.14</min_angle>
                 <max_angle>3.14</max_angle>
