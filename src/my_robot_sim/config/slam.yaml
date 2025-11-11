@@ -2,14 +2,11 @@ slam_toolbox:
   ros__parameters:
     use_sim_time: true
     map_frame: map
-    odom_frame: odom
-    base_frame: base_link
+    odom_frame: diff_drive/odom
+    base_frame: diff_drive/base_link
     scan_topic: /scan
     mode: mapping
-    resolution: 0.05
     publish_tf: true
-    transform_publish_period: 0.02
-    transform_timeout: 1.0
+    resolution: 0.05
+    transform_timeout: 0.5
     tf_buffer_duration: 20.0
-    minimum_time_interval: 0.05
-    scan_queue_size: 100
