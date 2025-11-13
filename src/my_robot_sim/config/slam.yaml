@@ -7,9 +7,20 @@ slam_toolbox:
     scan_topic: /scan
     mode: mapping
     publish_tf: true
-    resolution: 0.06              # 0.05 si quieres aún más “ligero”: 0.07 (menos detalle, más velocidad) 0.5
-    minimum_time_interval: 0.02   # acepta hasta ~50 Hz; no filtres de más
-    scan_queue_size: 10           # evita lag por colas enormes (mejor descartar que atrasar)
+
+    # 🔧 resolución del mapa (fina)
+    resolution: 0.05          # NO 0.5
+
+    # 🔧 frecuencia de actualización del mapa
+    map_update_interval: 0.1  # publica mapa cada 0.1 s (~10 Hz)
+
+    # 🔧 que actualice con movimientos pequeños
+    minimum_travel_distance: 0.05   # antes 0.15 aprox
+    minimum_travel_heading: 0.05    # antes 0.17 aprox
+
+    # Ya los tienes bien:
+    minimum_time_interval: 0.02     # acepta hasta ~50 Hz
+    scan_queue_size: 10             # evita colas grandes
     transform_publish_period: 0.02
     transform_timeout: 0.5
     tf_buffer_duration: 20.0
