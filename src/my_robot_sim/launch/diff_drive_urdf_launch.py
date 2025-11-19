@@ -35,9 +35,15 @@ def generate_launch_description():
     spawn = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-topic', '/robot_description', '-z', '0.05'],
+        arguments=[
+            '-topic', '/robot_description',
+            '-x', '0.0',   # lejos de box4
+            '-y', '0.0',
+            '-z', '0.05'
+        ],
         output='screen'
     )
+
 
     # Bridge ROS <-> GZ (sin TF)
     bridge = Node(
@@ -49,6 +55,7 @@ def generate_launch_description():
             '/model/diff_drive/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry',
             '/world/diff_drive_world/model/diff_drive/joint_state@sensor_msgs/msg/JointState[gz.msgs.Model',
             '/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
+            '/box4/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
 
             '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
         ],

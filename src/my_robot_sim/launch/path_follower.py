@@ -7,7 +7,8 @@ from rclpy.node import Node
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Twist
 import tf2_ros
-from tf_transformations import euler_from_quaternion  # si no lo tienes, te doy versión sin esto abajo
+# OJO: ya NO usamos tf_transformations
+# from tf_transformations import euler_from_quaternion
 
 
 class PathFollower(Node):
@@ -76,10 +77,11 @@ class PathFollower(Node):
         return x, y, yaw
 
     def quaternion_to_yaw(self, q):
-        # usando tf_transformations
-        quat = [q.x, q.y, q.z, q.w]
-        _, _, yaw = euler_from_quaternion(quat)
-        return yaw
+        # Versión sin tf_transformations, usando solo math
+        # q: geometry_msgs.msg.Quaternion
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
     def normalize_angle(self, a):
         while a > math.pi:
@@ -124,7 +126,7 @@ class PathFollower(Node):
                 break
             idx += 1
 
-        # Si no se encontró suficientemente lejos, usar último
+        # Si no se encontró suficientemente lejos, usar siguiente o último
         if best_idx == self.target_idx and best_idx < len(self.current_path) - 1:
             best_idx += 1
         self.target_idx = best_idx
@@ -143,12 +145,12 @@ class PathFollower(Node):
         cmd = Twist()
 
         # Ley de control tipo pure pursuit simplificada
-        # avanzar proporcional a distancia, girar proporcional al error angular
         k_lin = 0.8
         k_ang = 1.5
 
         cmd.linear.x = min(self.max_lin, k_lin * dist)
-        cmd.angular.z = max(-self.max_ang, min(self.max_ang, k_ang * angle_error))
+        cmd.angular.z = max(-self.max_ang,
+                            min(self.max_ang, k_ang * angle_error))
 
         # Pequeña zona muerta angular para evitar temblores
         if abs(angle_error) < 0.03:
@@ -178,6 +180,7 @@ if __name__ == '__main__':
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess, TimerAction
 import os
+
 def generate_launch_description():
     this_file = os.path.realpath(__file__)
     run_pf = ExecuteProcess(cmd=['python3', this_file], output='screen')
