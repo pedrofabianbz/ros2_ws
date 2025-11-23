@@ -16,7 +16,7 @@ data_files.append(('share/' + package_name + '/launch', ['launch/rrt_planner.py'
 data_files.append(('share/' + package_name + '/launch', ['launch/dynamic_map_layer.py']))
 data_files.append(('share/' + package_name + '/launch', ['launch/box4_oscillator.py']))
 ##ml
-data_files.append(('share/' + package_name + '/launch', ['launch/dyn_cells_inference.py']))
+data_files.append(('share/' + package_name + '/launch', ['launch/dynamic_visual_tracker.py']))
 data_files.append(('share/' + package_name + '/ml', ['ml/model_cnn.py']))
 
 
