@@ -9,7 +9,7 @@
             <right_joint>motor2</right_joint>
             <wheel_separation>0.1</wheel_separation>
             <wheel_radius>0.03</wheel_radius>
-            <max_linear_acceleration>0.3</max_linear_acceleration>
+            <max_linear_acceleration>0.5</max_linear_acceleration>
             <max_angular_acceleration>0.6</max_angular_acceleration>
             <odom_publish_frequency>50</odom_publish_frequency>
             <topic>cmd_vel</topic>
