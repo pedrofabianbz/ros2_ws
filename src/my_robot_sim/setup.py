@@ -17,7 +17,8 @@ data_files.append(('share/' + package_name + '/launch', ['launch/dynamic_map_lay
 data_files.append(('share/' + package_name + '/launch', ['launch/box4_oscillator.py']))
 ##ml
 data_files.append(('share/' + package_name + '/launch', ['launch/dynamic_visual_tracker.py']))
-data_files.append(('share/' + package_name + '/ml', ['ml/model_cnn.py']))
+data_files.append(('share/' + package_name + '/launch', ['launch/dyn2d_policy_node.py']))
+data_files.append(('share/' + package_name + '/launch', ['launch/policy_expert_v1.pt']))
 
 
 ## Resource

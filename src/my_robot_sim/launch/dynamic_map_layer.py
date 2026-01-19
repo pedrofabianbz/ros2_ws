@@ -9,7 +9,7 @@ from rclpy.duration import Duration
 
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan, Image
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, PoseStamped
 import tf2_ros
 
 # Para launch
@@ -37,15 +37,19 @@ class DynamicLayerSubmap(Node):
         self.declare_parameter('laser_frame', 'lidar')
         self.declare_parameter('robot_frame', 'base_link')
 
+        # Objeto dinámico (radio y valor en el mapa)
+        # La POSE VIENE DE /box4/pose, no de TF
+        self.declare_parameter('box_radius', 0.25)      # m (cubo 0.5m)
+        self.declare_parameter('box_value', 100)        # valor en occupancy
+
         # Dinámica básica
-        self.declare_parameter('decay_time', 0.5)          # seg antes de borrar obstáculo
+        self.declare_parameter('decay_time', 0.5)
         self.declare_parameter('obs_min_occupancy', 80)
-        # celdas con base >= free_threshold se consideran paredes/estático
         self.declare_parameter('free_threshold', 20)
 
         # Filtro extra: no marcar dinámico pegado a paredes
-        self.declare_parameter('static_border_threshold', 60)  # pared si base >= esto
-        self.declare_parameter('static_border_radius', 1)      # radio en celdas
+        self.declare_parameter('static_border_threshold', 60)
+        self.declare_parameter('static_border_radius', 1)
 
         # Submap
         self.declare_parameter('sub_width', 100)
@@ -80,6 +84,12 @@ class DynamicLayerSubmap(Node):
         self.robot_frame = self.get_parameter(
             'robot_frame').get_parameter_value().string_value
 
+        # parámetros del cubo dinámico
+        self.box_radius = self.get_parameter(
+            'box_radius').get_parameter_value().double_value
+        self.box_value = int(self.get_parameter(
+            'box_value').get_parameter_value().integer_value or 100)
+
         self.decay_time = self.get_parameter(
             'decay_time').get_parameter_value().double_value
         self.obs_value = int(self.get_parameter(
@@ -110,7 +120,10 @@ class DynamicLayerSubmap(Node):
         # para movimiento GLOBAL (en el mapa completo)
         self.prev_dyn_mask: Optional[List[bool]] = None  # len = width*height
 
-        # TF
+        # última pose conocida del cubo (x,y) en frame global_frame
+        self.last_box_pose: Optional[Tuple[float, float]] = None
+
+        # TF (solo para láser y robot)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -125,6 +138,14 @@ class DynamicLayerSubmap(Node):
             LaserScan,
             self.scan_topic,
             self.scan_callback,
+            10
+        )
+
+        # SUSCRIPCIÓN A LA POSE DEL CUBO PUBLICADA POR Box4Oscillator
+        self.create_subscription(
+            PoseStamped,
+            '/box4/pose',
+            self.box_pose_callback,
             10
         )
 
@@ -159,6 +180,7 @@ class DynamicLayerSubmap(Node):
             f" submap='{self.submap_topic}', motion='{self.motion_submap_topic}',"
             f" visual='{self.visual_topic}',"
             f" frames: global='{self.global_frame}', laser='{self.laser_frame}', robot='{self.robot_frame}',"
+            f" box_radius={self.box_radius},"
             f" sub_size={self.sub_w}x{self.sub_h}, freeze_static_map={self.freeze_static_map}, "
             f" static_border_threshold={self.static_border_threshold}, "
             f" static_border_radius={self.static_border_radius}"
@@ -167,7 +189,6 @@ class DynamicLayerSubmap(Node):
     # ---------- Callbacks ----------
 
     def map_callback(self, msg: OccupancyGrid):
-        """Mapa base; si freeze_static_map=True, solo el primero."""
         if self.freeze_static_map and self.static_frozen:
             return
 
@@ -184,10 +205,6 @@ class DynamicLayerSubmap(Node):
             self.get_logger().info("📌 Mapa estático BASE congelado (primer /map).")
 
     def scan_callback(self, msg: LaserScan):
-        """Usa el láser para:
-           - limpiar dinámicos a lo largo del rayo donde ahora se ve libre
-           - marcar impactos dinámicos en zonas realmente libres, lejos de paredes.
-        """
         if self.map_info is None or self.base_data is None or self.dyn_data is None:
             return
 
@@ -209,11 +226,9 @@ class DynamicLayerSubmap(Node):
                 angle += msg.angle_increment
                 continue
 
-            # Punto final del rayo
             ex = lx + r * math.cos(lyaw + angle)
             ey = ly + r * math.sin(lyaw + angle)
 
-            # --- 1) Barrer dinámicos a lo largo del rayo (libre) ---
             dx = ex - lx
             dy = ey - ly
             dist = math.hypot(dx, dy)
@@ -228,33 +243,30 @@ class DynamicLayerSubmap(Node):
                     continue
 
                 base_val_free = self.base_data[idx_free]
-
-                # Solo limpiamos en zonas que el mapa base considera libres
                 if base_val_free < self.free_threshold:
                     self.last_hits.pop(idx_free, None)
 
-            # --- 2) Marcar el impacto final como dinámico (si base es libre y NO cerca de pared) ---
             idx_hit = self.world_to_index(ex, ey)
             if idx_hit is not None:
                 base_val_hit = self.base_data[idx_hit]
-
-                # condición de "libre" respecto al mapa estático
                 if base_val_hit < self.free_threshold:
-                    # filtro adicional: lejos de paredes
                     if not self.is_near_static(idx_hit):
                         self.last_hits[idx_hit] = now_sec
 
             angle += msg.angle_increment
 
+    # Pose del cubo desde /box4/pose
+    def box_pose_callback(self, msg: PoseStamped):
+        # Asumimos que /box4/pose está en el mismo frame que global_frame (map)
+        self.last_box_pose = (msg.pose.position.x, msg.pose.position.y)
+
     def timer_callback(self):
-        """Actualiza dinámicos, /dynamic_map, /dynamic_submap, /dynamic_motion_submap y /dynamic_visual."""
         if self.map_info is None or self.base_data is None:
             return
 
         now_sec = self.get_clock().now().nanoseconds * 1e-9
         size = self.map_info.width * self.map_info.height
 
-        # --- Recalcular máscara dinámica ---
         new_dyn = [-1] * size
         to_delete = []
         for idx, t in self.last_hits.items():
@@ -267,26 +279,43 @@ class DynamicLayerSubmap(Node):
             self.last_hits.pop(idx, None)
         self.dyn_data = new_dyn
 
-        # --- Movimiento GLOBAL: cambios de estado dinámico en el mapa completo ---
         if self.prev_dyn_mask is None or len(self.prev_dyn_mask) != size:
             self.prev_dyn_mask = [False] * size
 
-        motion_global = [0] * size  # 1 = cambio libre/ocupado dinámico, 0 = igual
-
+        motion_global = [0] * size
         for idx in range(size):
-            prev_occ = self.prev_dyn_mask[idx]        # estaba dinámico antes?
-            cur_occ = (self.dyn_data[idx] == 100)     # es dinámico ahora?
+            prev_occ = self.prev_dyn_mask[idx]
+            cur_occ = (self.dyn_data[idx] == 100)
             if prev_occ != cur_occ:
                 motion_global[idx] = 1
             self.prev_dyn_mask[idx] = cur_occ
 
-        # --- Fusionar a /dynamic_map ---
         fused = []
         for i, base_val in enumerate(self.base_data):
             if self.dyn_data[i] == 100:
                 fused.append(100)
             else:
                 fused.append(base_val)
+
+        # ---- pintar el objeto dinámico box4 usando /box4/pose ----
+        box_pose = self.last_box_pose
+        if box_pose is not None:
+            bx, by = box_pose
+            self.paint_disc_world(
+                fused,
+                bx,
+                by,
+                radius=self.box_radius,
+                value=self.box_value
+            )
+            if self.dyn_data is not None:
+                self.paint_disc_world(
+                    self.dyn_data,
+                    bx,
+                    by,
+                    radius=self.box_radius,
+                    value=100
+                )
 
         full = OccupancyGrid()
         full.header.frame_id = self.global_frame
@@ -295,7 +324,6 @@ class DynamicLayerSubmap(Node):
         full.data = fused
         self.pub_dynamic_map.publish(full)
 
-        # --- Submap & motion & visual ---
         robot_pose = self.get_robot_pose()
         if robot_pose is None:
             return
@@ -312,7 +340,6 @@ class DynamicLayerSubmap(Node):
             if motion_msg is not None:
                 self.pub_motion_submap.publish(motion_msg)
 
-            # Visual RGB: estático negro, dinámico rojo, movimiento azul, libre blanco
             self.publish_visual(submap_msg, sub_data, motion_data, global_idx_list)
 
     # ---------- TF ----------
@@ -393,10 +420,41 @@ class DynamicLayerSubmap(Node):
             return None
         return i, j
 
+    def paint_disc_world(self,
+                         data_list: List[int],
+                         cx: float,
+                         cy: float,
+                         radius: float,
+                         value: int):
+        if self.map_info is None:
+            return
+
+        info = self.map_info
+        res = info.resolution
+        cell = self.world_to_cell(info, cx, cy)
+        if cell is None:
+            return
+
+        i_c, j_c = cell
+        width = info.width
+        height = info.height
+
+        r_cells = int(radius / res) + 1
+
+        for di in range(-r_cells, r_cells + 1):
+            for dj in range(-r_cells, r_cells + 1):
+                ii = i_c + di
+                jj = j_c + dj
+                if ii < 0 or jj < 0 or ii >= height or jj >= width:
+                    continue
+                dx = dj * res
+                dy = di * res
+                if dx * dx + dy * dy <= radius * radius:
+                    idx = ii * width + jj
+                    if 0 <= idx < len(data_list):
+                        data_list[idx] = value
+
     def is_near_static(self, idx: int) -> bool:
-        """Devuelve True si la celda idx está pegada a paredes
-        en el mapa estático (en un radio de static_border_radius).
-        """
         if self.base_data is None or self.map_info is None:
             return False
 
@@ -422,7 +480,6 @@ class DynamicLayerSubmap(Node):
 
     def build_submap(self, full_map: OccupancyGrid,
                      robot_x: float, robot_y: float):
-        """Submap centrado en el robot + lista de índices globales de cada celda."""
         info = full_map.info
         data = list(full_map.data)
 
@@ -480,9 +537,6 @@ class DynamicLayerSubmap(Node):
                             submap_msg: OccupancyGrid,
                             global_idx_list: list,
                             motion_global: list):
-        """Proyecta el movimiento GLOBAL al submap:
-           motion_global[idx_global] = 1 si esa celda cambió libre/ocupado dinámico.
-        """
         if motion_global is None:
             return None, None
 
@@ -507,12 +561,6 @@ class DynamicLayerSubmap(Node):
                        sub_data: list,
                        motion_data: Optional[list],
                        global_idx_list: list):
-        """Publica una imagen RGB con:
-           - estático: negro
-           - dinámico: rojo
-           - en movimiento: azul
-           - libre/desconocido: blanco
-        """
         if self.base_data is None or self.dyn_data is None:
             return
 
@@ -522,13 +570,21 @@ class DynamicLayerSubmap(Node):
         if motion_data is None:
             motion_data = [0] * len(sub_data)
 
+        # info para localizar el cubo en la imagen
+        has_box = self.last_box_pose is not None
+        if has_box:
+            bx, by = self.last_box_pose
+            res = submap_msg.info.resolution
+            ox = submap_msg.info.origin.position.x
+            oy = submap_msg.info.origin.position.y
+            r2 = self.box_radius * self.box_radius
+
         rgb_bytes = bytearray()
         for idx in range(len(sub_data)):
             g_idx = global_idx_list[idx]
             cur = sub_data[idx]
             mot = motion_data[idx]
 
-            # default: libre / desconocido → blanco
             r = 255
             g = 255
             b = 255
@@ -542,19 +598,26 @@ class DynamicLayerSubmap(Node):
                 dynamic_occ = (dyn_val == 100)
                 moving = (mot == 100)
 
-                # Prioridad: movimiento > dinámico > estático > libre
                 if moving:
-                    # azul
-                    r, g, b = 0, 0, 255
+                    r, g, b = 0, 0, 255      # azul
                 elif dynamic_occ:
-                    # rojo
-                    r, g, b = 255, 0, 0
+                    r, g, b = 255, 0, 0      # rojo
                 elif static_occ and occ:
-                    # negro
-                    r, g, b = 0, 0, 0
+                    r, g, b = 0, 0, 0        # negro
                 else:
-                    # libre / desconocido: blanco
-                    r, g, b = 255, 255, 255
+                    r, g, b = 255, 255, 255  # blanco
+
+            # override si esta celda está dentro del radio del cubo
+            if has_box:
+                si = idx // w
+                sj = idx % w
+                cx = ox + (sj + 0.5) * res
+                cy = oy + (si + 0.5) * res
+                dx = cx - bx
+                dy = cy - by
+                if dx*dx + dy*dy <= r2:
+                    # Pinta el cubo en VERDE para distinguirlo bien
+                    r, g, b = 0, 255, 0
 
             rgb_bytes.extend([r, g, b])
 
@@ -580,7 +643,6 @@ def main(args=None):
         rclpy.shutdown()
 
 
-# ---- modo launch (ros2 launch my_robot_sim dynamic_map_layer.py) ----
 def generate_launch_description():
     this_file = os.path.realpath(__file__)
     run = ExecuteProcess(cmd=['python3', this_file], output='screen')

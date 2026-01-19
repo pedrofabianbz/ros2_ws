@@ -1,0 +1,356 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <world name="corridor_s">
+    <!-- Física -->
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <!-- Plugins de sistema (Fortress) -->
+    <plugin name="ignition::gazebo::systems::Physics"
+            filename="ignition-gazebo-physics-system"/>
+    <plugin name="ignition::gazebo::systems::UserCommands"
+            filename="ignition-gazebo-user-commands-system"/>
+    <plugin name="ignition::gazebo::systems::SceneBroadcaster"
+            filename="ignition-gazebo-scene-broadcaster-system"/>
+    <plugin name="ignition::gazebo::systems::Sensors"
+            filename="ignition-gazebo-sensors-system">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light name='sun' type='directional'>
+      <cast_shadows>1</cast_shadows>
+      <pose>0 0 10 0 -0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.90000000000000002</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type='adiabatic' />
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>1</shadows>
+    </scene>
+
+    <!-- Ground -->
+    <model name='ground_plane'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction><ode /></friction>
+            <bounce />
+            <contact />
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+          <plugin name='__default__' filename='__default__' />
+        </visual>
+      </link>
+      <plugin name='__default__' filename='__default__' />
+      <pose>0 0 0 0 -0 0</pose>
+    </model>
+
+    <!-- Border (caja 20x20) -->
+    <model name='border'>
+      <pose>0 0 1 0 0 0</pose>
+      <static>true</static>
+
+      <link name='wall1'>
+        <pose>-10.005 0 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='wall1_collision'>
+          <geometry><box><size>0.01 20 2</size></box></geometry>
+        </collision>
+        <visual name='wall1_visual'>
+          <geometry><box><size>0.01 20 2</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.01 0.05 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='wall2'>
+        <pose>10.005 0 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='wall2_collision'>
+          <geometry><box><size>0.01 20 2</size></box></geometry>
+        </collision>
+        <visual name='wall2_visual'>
+          <geometry><box><size>0.01 20 2</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.01 0.05 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='wall3'>
+        <pose>0 10.005 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='wall3_collision'>
+          <geometry><box><size>20 0.01 2</size></box></geometry>
+        </collision>
+        <visual name='wall3_visual'>
+          <geometry><box><size>20 0.01 2</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.01 0.05 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='wall4'>
+        <pose>0 -10.005 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='wall4_collision'>
+          <geometry><box><size>20 0.01 2</size></box></geometry>
+        </collision>
+        <visual name='wall4_visual'>
+          <geometry><box><size>20 0.01 2</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.01 0.05 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Corredor en S (ancho libre = 3.0m) -->
+    <!-- Hecho con 3 tramos: -->
+    <!--   A) tramo izquierdo centrado en y=0 (x=-7) -->
+    <!--   B) tramo medio centrado en y=+2 (x=0) -->
+    <!--   C) tramo derecho centrado en y=-2 (x=+7) -->
+    <!-- Nota: el "pasillo" es el espacio entre las dos paredes de cada tramo. -->
+    <model name='corridor_s_walls'>
+      <pose>0 0 0.5 0 0 0</pose>
+      <static>true</static>
+
+      <!-- Parámetros:
+           ancho libre (gap) = 3.0m
+           espesor pared = 0.20m
+           altura = 1.0m
+           largo tramo = 8.0m
+           desplazamiento en y entre tramos = 2.0m
+           => centros de paredes = y_center ± (gap/2 + esp/2) = y_center ± 1.6
+      -->
+
+      <!-- ===== Tramo A (izquierda), centro y=0, x=-7 ===== -->
+      <link name='A_top'>
+        <pose>-7  1.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='A_top_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='A_top_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='A_bottom'>
+        <pose>-7 -1.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='A_bottom_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='A_bottom_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <!-- ===== Tramo B (medio), centro y=+2, x=0 ===== -->
+      <link name='B_top'>
+        <pose>0  3.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='B_top_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='B_top_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='B_bottom'>
+        <pose>0  0.4 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='B_bottom_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='B_bottom_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <!-- ===== Tramo C (derecha), centro y=-2, x=+7 ===== -->
+      <link name='C_top'>
+        <pose>7 -0.4 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='C_top_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='C_top_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <link name='C_bottom'>
+        <pose>7 -3.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='C_bottom_collision'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='C_bottom_visual'>
+          <geometry><box><size>8 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+
+      <!-- “Puentes” diagonales para conectar tramos y formar la S sin huecos enormes -->
+      <!-- Conectan A->B y B->C usando paredes finas tipo “funnel”. -->
+      <!-- Ajustados para dejar paso >= 3m aprox en la zona de unión. -->
+
+      <!-- Conexión A->B: dos diagonales -->
+      <link name='AB_diag_top'>
+        <pose>-3.5 2.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='AB_diag_top_collision'>
+          <!-- barra diagonal aproximada (longitud 5.2) -->
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='AB_diag_top_visual'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+        <!-- rotación z ~ +22° -->
+        <pose>-3.5 2.6 0 0 0 0.38</pose>
+      </link>
+
+      <link name='AB_diag_bottom'>
+        <pose>-3.5 -0.6 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='AB_diag_bottom_collision'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='AB_diag_bottom_visual'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+        <!-- rotación z ~ +22° -->
+        <pose>-3.5 -0.6 0 0 0 0.38</pose>
+      </link>
+
+      <!-- Conexión B->C: dos diagonales -->
+      <link name='BC_diag_top'>
+        <pose>3.5 1.4 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='BC_diag_top_collision'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='BC_diag_top_visual'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+        <!-- rotación z ~ -22° -->
+        <pose>3.5 1.4 0 0 0 -0.38</pose>
+      </link>
+
+      <link name='BC_diag_bottom'>
+        <pose>3.5 -1.8 0 0 0 0</pose>
+        <static>true</static>
+        <collision name='BC_diag_bottom_collision'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+        </collision>
+        <visual name='BC_diag_bottom_visual'>
+          <geometry><box><size>5.2 0.20 1</size></box></geometry>
+          <material>
+            <ambient>0.1 0.1 0.1 1</ambient>
+            <diffuse>0 0.1 0.2 1</diffuse>
+            <specular>0 0.01 0.05 1</specular>
+          </material>
+        </visual>
+        <!-- rotación z ~ -22° -->
+        <pose>3.5 -1.8 0 0 0 -0.38</pose>
+      </link>
+
+    </model>
+  </world>
+</sdf>
