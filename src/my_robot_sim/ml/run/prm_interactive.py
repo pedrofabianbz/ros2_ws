@@ -98,6 +98,27 @@ Notas rápidas
 - Si RL no carga (modelo inválido/ruta mala), el sistema sigue funcionando en modo nominal.
 """
 
+
+# =====================================================
+# ✅ NEW: colisión robot vs estáticos / robot vs dinámicos
+# (NO: dinámicos vs mapa)
+# =====================================================
+def _circle_rect_collision(cx: float, cy: float, r: float, rect: Rect) -> bool:
+    xmin, ymin, xmax, ymax = rect
+    qx = min(max(cx, xmin), xmax)
+    qy = min(max(cy, ymin), ymax)
+    dx = cx - qx
+    dy = cy - qy
+    return (dx * dx + dy * dy) <= (r * r)
+
+
+def _circle_circle_collision(x1: float, y1: float, r1: float, x2: float, y2: float, r2: float) -> bool:
+    dx = x1 - x2
+    dy = y1 - y2
+    rr = r1 + r2
+    return (dx * dx + dy * dy) <= (rr * rr)
+
+
 # ---------------- PRM core (AABB rects) ----------------
 @dataclass
 class PRMConfig:
@@ -338,6 +359,7 @@ class WaypointFollower:
     - RL: ACTIVACIÓN PRINCIPAL por distancia centro-a-centro (como d_dyn del entrenamiento).
       (Opcional) TTC como refuerzo.
     - Dinámica: rate limit en v y w.
+    - ✅ Colisión: robot vs mapa estático + robot vs dinámicos (NO dinámicos vs mapa).
     """
 
     def __init__(
@@ -369,7 +391,10 @@ class WaypointFollower:
         self.v_nom = 0.4
         self.v_max = 0.8
         self.w_max = 5.0
-        self.robot_radius = 0.10
+
+        # ✅ intenta leer radios desde el World (fallback a defaults)
+        self.robot_radius = float(getattr(self.world, "robot_radius", 0.10))
+
         self.wp_tol = 0.20
 
         # actuator-like limits
@@ -407,6 +432,15 @@ class WaypointFollower:
         # Trajectory with mode flag (0=nominal, 1=rl)
         self.traj: List[Point2] = [(self.x, self.y)]
         self.traj_mode: List[int] = [0]
+
+        # ✅ collision state (robot vs static/dyn ONLY)
+        self.collision = False
+        self.collision_wall = False
+        self.collision_dyn = False
+        self.done_reason = "running"  # running | reached | collision_wall | collision_dyn
+
+        # ✅ cache obstáculos estáticos del world
+        self._static_rects: List[Rect] = list(getattr(self.world, "static_rects", []))
 
     @staticmethod
     def _wrap(a: float) -> float:
@@ -651,9 +685,31 @@ class WaypointFollower:
         dv = float(np.clip(dv, -dv_max, dv_max))
         return float(current + dv)
 
+    # ✅ NEW: collision check (robot vs static + robot vs dyn)
+    def _check_collision(self) -> None:
+        # 1) robot vs mapa estático
+        for rect in self._static_rects:
+            if _circle_rect_collision(self.x, self.y, self.robot_radius, rect):
+                self.collision = True
+                self.collision_wall = True
+                self.done_reason = "collision_wall"
+                return
+
+        # 2) robot vs dinámicos
+        for c in getattr(self.world, "dynamic_circles", []):
+            if c is None or len(c) < 3:
+                continue
+            cx, cy, r = float(c[0]), float(c[1]), float(c[2])
+            if _circle_circle_collision(self.x, self.y, self.robot_radius, cx, cy, float(r)):
+                self.collision = True
+                self.collision_dyn = True
+                self.done_reason = "collision_dyn"
+                return
+
     def step(self) -> bool:
         gx_final, gy_final = self.path[-1]
         if float(math.hypot(gx_final - self.x, gy_final - self.y)) < self.wp_tol:
+            self.done_reason = "reached"
             return True
 
         # 1) progress
@@ -721,7 +777,14 @@ class WaypointFollower:
         self.world.step(self.dt)
         self.t_sim += self.dt
 
+        # ✅ guarda trayectoria y luego chequea colisión (para ver el punto de impacto)
         self._traj_append(mode)
+
+        # ✅ collision check
+        self._check_collision()
+        if self.collision:
+            return True
+
         _ = (d_center, ttc)
         return False
 
@@ -990,11 +1053,15 @@ class PlotRunner:
             t = 0.0
             mode = "NOM"
             a = 0
+            reason = ""
         else:
             x, y, th = self.follower.x, self.follower.y, self.follower.theta
             t = self.follower.t_sim
             mode = "RL" if self.follower.rl_active else "NOM"
             a = getattr(self.follower, "last_action", 0)
+            reason = getattr(self.follower, "done_reason", "running")
+            if reason == "running":
+                reason = ""
 
         self.robot_circle.center = (x, y)
         self.robot_heading.set_data(
@@ -1025,8 +1092,9 @@ class PlotRunner:
         self.time_text.set_text(f"t={t:.2f}s")
 
         if self.follower is not None:
+            extra = f" | {reason}" if reason else ""
             self.title.set_text(
-                f"{self.world_path.name} | t={t:.2f}s | mode={mode} | a={a} | clearance={self.cfg.clearance:.2f}"
+                f"{self.world_path.name} | t={t:.2f}s | mode={mode} | a={a} | clearance={self.cfg.clearance:.2f}{extra}"
             )
         else:
             self.title.set_text(f"{self.world_path.name} | start=(0,0) | clearance={self.cfg.clearance:.2f}")
@@ -1188,7 +1256,11 @@ class PlotRunner:
             self._update_artists()
 
             if done:
-                print("✅ Goal reached (follow + RL override)")
+                reason = getattr(self.follower, "done_reason", "done")
+                if reason == "reached":
+                    print("✅ Goal reached (follow + RL override)")
+                else:
+                    print(f"💥 STOP: {reason}")
                 self._running = False
                 if self._anim is not None:
                     self._anim.event_source.stop()
