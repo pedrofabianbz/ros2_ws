@@ -1,50 +1,34 @@
-# Navegación híbrida PRM + Pure Pursuit + PPO (evasión local)
+# ros2_ws — Workspace ROS 2 (Gazebo) + módulo de ML en Python
 
-Este repositorio implementa y evalúa una arquitectura híbrida para navegación de un robot diferencial:
+Este repositorio contiene un workspace de **ROS 2** (con paquetes de simulación/launch para **Gazebo**) y, adicionalmente, un módulo en **Python** para navegación híbrida y entrenamiento RL.
 
-1) **Planificación global** con **PRM + A\*** sobre obstáculos estáticos (mapas SDF).
-2) **Ejecución nominal** con seguidor geométrico **Pure Pursuit**.
-3) **Evasión local** con una política **PPO discreta** que **solo interviene** cuando hay **riesgo** con obstáculos dinámicos (con histéresis y criterio por distancia/TTC).
+## Estructura (alto nivel)
 
-El objetivo es comparar el baseline clásico (**PRM+PP**) frente al sistema integrado (**PRM+PP+RL**) en varios mapas y escenarios con obstáculos dinámicos.
+- `src/`
+  - paquetes ROS 2 del proyecto
+  - **módulo Python para navegación/entrenamiento**:  
+    `src/my_robot_sim/ml/`
 
----
+Todo lo relacionado con:
+- simulador 2D en Python,
+- planificación PRM + A*,
+- seguidor Pure Pursuit,
+- entornos Gym para entrenamiento PPO,
+- scripts de entrenamiento/evaluación,
+- logs de TensorBoard,
+- modelos entrenados,
 
-## Estructura del proyecto (carpetas principales)
+está en:
 
-- `run/`
-  - `prm_interactive.py`: interfaz interactiva para construir PRM, planear y ejecutar (incluye modo RL si se carga modelo).
-- `sim/`
-  - `core/`: geometría, mundo 2D, colisiones, utilidades base.
-  - `runtime/`: integración/ejecución del sistema (control nominal + conmutador RL).
-  - `training/`: entornos Gym para entrenamiento
-    - `env_avoid_train.py`: entorno **empty** (obs 7D)
-    - `env_avoid_corridor_train.py`: entorno **corridor** (obs 10D)
-- `train/`
-  - `train_avoid.py`, `train_avoid1.py`: entrenamiento PPO
-  - `eval_avoid.py`, `eval_avoid1.py`: evaluación cuantitativa
-  - `eval_avoid_empty.py`: evaluación en entorno abierto
-  - `play_avoid_debug.py`: ejecución/debug de política
-- `models/`: modelos entrenados (`.zip`) y/o checkpoints
-- `tb_avoid/`: logs de TensorBoard
-- `worlds/`: mapas SDF
-  - `Boxes.sdf`, `corridor.sdf`, `corridor_s.sdf`, `diff_drive_empty.sdf`, `maze.sdf`
-- `integration/`: (si aplica) scripts o glue para integración del pipeline
-- `launch/`, `config/`: (si aplica) artefactos ROS2/Gazebo del proyecto original
-- `ml/`: entorno python (`.venv`) y scripts relacionados
+**`src/my_robot_sim/ml/`**
 
----
+> Para instalar dependencias y ejecutar experimentos en Python, sigue el README dentro de esa carpeta:  
+> `src/my_robot_sim/ml/README.md`
 
-## Requisitos
+## ROS 2 / Gazebo (workspace)
 
-- Python 3.10+ recomendado
-- Dependencias típicas:
-  - `numpy`, `gymnasium`
-  - `stable-baselines3`
-  - `matplotlib` (si graficas)
+Este workspace se construye y ejecuta como cualquier workspace estándar de ROS 2.
 
 
----
-
-
-
+colcon build --symlink-install
+source install/setup.bash
