@@ -15,39 +15,138 @@ from ..core.render_utils import render_world
 
 class AvoidCorridorTrainEnv(gym.Env):
     """
-    Entrenamiento navegación + evitación (discreto) EN PASILLO RÍGIDO.
+    AvoidCorridorTrainEnv (sim/training/env_avoid_corridor_train.py)
+    ===============================================================
 
-    Observación:
-      - use_corridor_obs=True  -> 10D
-          [0] dist_goal
-          [1] cos(ang_goal)
-          [2] sin(ang_goal)
-          [3] d_dyn
-          [4] cos(alpha)
-          [5] sin(alpha)
-          [6] v_closing
-          [7] v_lat_rel
-          [8] ct_signed_norm
-          [9] wall_dist_norm
-      - use_corridor_obs=False -> 8D
+    Qué hace
+    --------
+    Entorno Gymnasium para entrenar una política discreta de evasión **en un pasillo rígido**
+    (con paredes laterales). A diferencia del env “empty”, aquí el robot debe:
 
-    Cambios clave para evitar colapso a BRAKE:
-      1) BRAKE por defecto = "crawl" (no STOP). STOP real solo con stop_no_gap.
-      2) FRONT override: si viene de frente, TTC manejable y eligió BRAKE -> STEER al centro.
-      3) FRONT stall penalty: castiga congelarte en head-on cuando aún hay margen.
-      4) TTC calculado y logueado (no entra a la obs 10D).
+    - Avanzar hacia un GOAL (navegación nominal incluida dentro del env).
+    - Evitar **un** obstáculo dinámico circular que se mueve dentro del pasillo y rebota en paredes.
+    - Aprender una corrección local (tipo “steer/ brake/ boost”) que se suma al control nominal.
 
-    PARCHES anti-runover:
-      - Si el dinámico viene cerrando y tú vas demasiado lento por BRAKE/caps,
-        mete piso de velocidad (solo si no estás pegado a pared y no estás en stop_no_gap).
-      - trap_stop_no_gap: STOP solo si es realmente inminente (TTC bajo o casi contacto).
+    Este env ya trae mucha “ingeniería de seguridad” y shaping para evitar comportamientos malos:
+    - Evitar colapsar a BRAKE infinito (anti-conservador, stall penalties).
+    - Manejar head-on (front conflict) con override brake->steer si aún hay margen.
+    - Manejar cruces laterales con CPA (closest point of approach) como override de seguridad.
+    - Evitar “runover” (que te alcancen por ir muy lento) con floors de velocidad.
+    - “Commit speed”: cuando hay riesgo real, fuerza una decisión por ~0.6s: o PASAS (BOOST) o CEDES (BRAKE).
 
-    PATCH COMMIT-SPEED (lo que pediste: o PASAS o CEDES, nada de “tibio”):
-      - Si el dinámico te ALCANZA (v_closing<0) y viene desde atrás/lateral:
-            => COMMIT BOOST ~0.6s y NO dejes que wall_guard/trap_vcap te cape.
-      - Si TÚ vas frontal hacia el dinámico (riesgo y alpha frontal):
-            => COMMIT BRAKE ~0.6s.
+    Cómo se corre / cómo se usa
+    ---------------------------
+    No se ejecuta solo. Se instancia desde scripts de entrenamiento/evaluación (PPO) o debug.
+    Ejemplo típico:
+
+        env = AvoidCorridorTrainEnv(
+            sdf_world="worlds/corridor.sdf",
+            use_corridor_obs=True,
+            randomize_corridor=True,
+            render_mode=None,
+            seed=0,
+        )
+        obs, info = env.reset()
+        for _ in range(250):
+            a = env.action_space.sample()
+            obs, r, term, trunc, info = env.step(a)
+            if term or trunc:
+                obs, info = env.reset()
+
+    Para visualizar: `render_mode="human"`.
+
+    Inputs principales (constructor)
+    --------------------------------
+    Hay MUCHOS hiperparámetros, pero los relevantes para “usar desde cero” son:
+
+    - sdf_world: mapa `.sdf` (para render / mundo base).
+    - use_corridor_obs: True -> obs 10D (recomendado), False -> obs 8D.
+    - corridor_half_width + randomize_corridor (+ hw_min/hw_max):
+    define el ancho del pasillo (y si se randomiza por episodio).
+    - v_nom, v_brake, v_boost:
+    velocidades nominal, “crawl” al frenar, y boost.
+    - activate_radius / deactivate_radius + activación por closing/TTC:
+    define cuándo “se prende” la parte RL (gating interno con histéresis).
+    - max_steps, seed, render_mode.
+
+    Acciones (Discrete(7))
+    ----------------------
+    Política discreta `a ∈ {0..6}` aplicada SOLO cuando `rl_active=True` (si no, manda el nominal):
+
+    - 0 KEEP        : no corrige w (sigue nominal)
+    - 1 SMALL_LEFT  : +0.4 en corrección angular
+    - 2 SMALL_RIGHT : -0.4
+    - 3 HARD_LEFT   : +1.0
+    - 4 HARD_RIGHT  : -1.0
+    - 5 BRAKE       : baja velocidad a v_brake (por defecto “crawl”, no stop)
+    - 6 BOOST       : sube velocidad a v_boost
+
+    Además hay overrides de seguridad (pared/CPA/trap/front/commit-speed) que pueden cambiar
+    la acción ejecutada respecto a la acción elegida.
+
+    Observación (8D u 10D)
+    ----------------------
+    Base (8D):
+    [0] dist_goal
+    [1] cos(ang_goal)
+    [2] sin(ang_goal)
+    [3] d_dyn
+    [4] cos(alpha)
+    [5] sin(alpha)
+    [6] v_closing
+    [7] v_lat_rel
+
+    Extra si use_corridor_obs=True (10D):
+    [8] ct_signed_norm     : desvío lateral normalizado respecto al centro del pasillo
+    [9] wall_dist_norm     : distancia a la pared (normalizada 0..1)
+
+    Notas:
+    - Incluye “mirror augmentation”: con probabilidad `p_mirror` refleja el episodio en Y y
+    canonicaliza obs/acciones para aumentar datos.
+
+    Dinámica / mundo
+    ----------------
+    - Robot: unicycle con límites (v_max, w_max) y *rate limiting* (a_lin, a_ang).
+    - Dinámico: círculo con velocidad aleatoria en [v_dyn_min, v_dyn_max], rebota en paredes del pasillo.
+    - El pasillo se define como una “banda” centrada en la línea start->goal (basis del corredor).
+
+    Reward y terminales
+    -------------------
+    Reward mezcla varias señales (resumen):
+    - Progreso hacia goal: diferencia de distancia (clipeada) * k_progress.
+    - Costo por tiempo (time_cost).
+    - Penalizaciones por riesgo de colisión con el dinámico dentro de “safe distance” (k_risk, k_close).
+    - Penalizaciones por pared (k_wall, k_wall_v, wall_touch shaping).
+    - Penalizaciones anti-conservadoras: brake_penalty (frenar sin necesidad), stall_penalty (quedarse parado).
+    - Shaping especial para head-on (front conflict) y para cruces laterales (CPA, trap-wall).
+    - Bonus por llegar a goal (goal_bonus + finish_bonus_fast).
+    Terminal:
+    - terminated=True si colisiona (pared o dinámico) o si alcanza el goal.
+    - truncated=True si llega a max_steps.
+
+    Outputs de step()
+    -----------------
+    Devuelve:
+
+        obs, reward, terminated, truncated, info
+
+    `info` es MUY rico para debug y TensorBoard (ejemplos):
+    - distancias (d_dyn, dist_goal), TTC (ttc0), estados de conflictos
+    - flags de overrides (override_action, override_reason, cpa_override, trap_active, etc.)
+    - métricas de pared (wall_dist_norm_world, collision_wall)
+    - trazas de “commit-speed” (commit_mode, commit_k, runover_guard)
+
+    Render
+    ------
+    Si `render_mode="human"`, dibuja mundo/robot/goal y además las dos líneas del pasillo
+    para ver claramente paredes y centro. El zoom se controla con `render_half_span`.
+
+    En una frase
+    ------------
+    Este env no es “solo un pasillo”: es un banco de pruebas con reglas y shaping para forzar
+    comportamientos útiles en interacción estrecha (pasar/ceder) sin chocar con paredes.
     """
+
 
     metadata = {"render_modes": ["human"], "render_fps": 20}
 

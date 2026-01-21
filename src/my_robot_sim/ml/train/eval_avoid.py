@@ -11,6 +11,115 @@ from stable_baselines3 import PPO
 from sim.training.env_avoid_train import AvoidTrainEnv
 from sim.training.env_avoid_corridor_train import AvoidCorridorTrainEnv
 
+"""
+eval_avoid.py (ml/train/eval_avoid.py)
+=====================================
+
+Qué hace
+--------
+Script de evaluación cuantitativa para un modelo **PPO** entrenado en evasión.
+Corre muchos episodios (por defecto 200), calcula métricas agregadas y opcionalmente
+reproduce (“replay”) los fallos con render + un log compacto por paso.
+
+Soporta automáticamente distintos entornos según la dimensión de observación del modelo:
+- obs_dim == 7  -> AvoidTrainEnv (entorno abierto/empty)
+- obs_dim == 9  -> AvoidCorridorTrainEnv (compat histórico)
+- obs_dim == 10 -> AvoidCorridorTrainEnv (pasillo con extras tipo ct/wall)
+
+Además, permite pasar parámetros extra al entorno desde CLI con `--env-kw`.
+
+Cómo se corre
+-------------
+Desde la carpeta `ml/`:
+
+1) Evaluación básica (deterministic por defecto si no pones flags):
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip
+
+2) Más episodios + semilla base:
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip --episodes 500 --seed-base 1000
+
+3) Política determinista vs estocástica:
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip --deterministic
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip --stochastic
+
+4) Randomizar ancho del pasillo durante eval:
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip --randomize-corridor --corridor-hw-min 0.55 --corridor-hw-max 1.20
+
+5) Reproducir fallos con render (máx N replays):
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip --replay-fails --max-replays 10
+
+6) Pasar kwargs al env (sin tocar código):
+    python3 -m train.eval_avoid --model models/MI_MODELO.zip \
+        --env-kw anti_runover_enable=0 \
+        --env-kw commit_speed_enable=0 \
+        --env-kw p_conflict=1.0
+
+Inputs (CLI)
+------------
+Obligatorio:
+- --model PATH            Ruta al .zip del modelo PPO (Stable-Baselines3)
+
+Opcionales comunes:
+- --episodes N            # episodios (default 200)
+- --seed-base N           semilla base (default 123)
+- --p-mirror X            prob. de mirroring en el env durante eval (default 0.0)
+- --deterministic / --stochastic
+- --wall-touch-th X       umbral para contar “rozó pared” (wall_dist_min < th)
+- --corridor-half-width X half-width fijo (si NO usas --randomize-corridor)
+- --randomize-corridor + hw min/max
+- --print-info-keys       imprime keys del dict info del primer episodio
+
+Replays / debug:
+- --replay-fails          reproduce episodios que NO llegaron a goal
+- --max-replays N
+- --replay-log-mode {interesting,near,all}
+- --replay-print-last N   imprime cola del buffer de replay
+- --replay-near-d, --replay-near-wall, --replay-slow-vcmd, --replay-slow-v
+
+Passthrough al env:
+- --env-kw k=v            repetible; parsea tipos (bool/int/float/str)
+  Ej: --env-kw anti_runover_enable=false
+
+Outputs (qué imprime)
+---------------------
+Imprime un resumen con tasas y promedios:
+
+1) Éxito y seguridad:
+- reach_rate
+- collision_rate (total), collision_wall_rate, collision_dyn_rate
+- truncated_rate
+- avg_steps_to_end y avg_time_to_end (segundos)
+
+2) Señales de “se abre / se pega a pared”:
+- cross-track mean/max (proxy de desviación lateral)
+- diagnósticos de pared (min dist, penalizaciones acumuladas, overrides)
+
+3) Distribución de acciones:
+- “policy RAW” (acción que predice el modelo)
+- “policy EFFECTIVE” (acción ya espejada si el episodio fue mirrored)
+- “executed” (acción realmente ejecutada por el env tras overrides: CPA, trap-wall, hard brake, etc.)
+También separa distribución SOLO durante pasos donde rl_active==True.
+
+4) Replays (si activas --replay-fails):
+- Render del episodio
+- Un “tail log” por paso con campos clave:
+  a_raw / a_eff / a_exec, override_reason, wall_dist, d_dyn, ttc0, alpha0, vclose0, v y v_cmd, flags de guardas.
+
+Conceptos clave (para no confundirse)
+-------------------------------------
+- a_raw: acción que entrega PPO (antes de mirror)
+- a_eff: acción efectiva tras mirror (si mirrored=True)
+- a_exec: acción ejecutada al final (puede diferir por overrides de seguridad/shaping)
+- mismatch_eff_vs_exec: cuántos pasos el env terminó ejecutando algo distinto a lo que “quería” la política efectiva.
+
+En una frase
+------------
+Este script carga un PPO, detecta qué entorno corresponde por obs_dim, corre muchos episodios,
+resume métricas (éxito/choques/acciones/pared) y, si quieres, reproduce fallos con logs por paso
+para depurar por qué se cayó (override, pared, TTC, etc.).
+"""
+
+
 ACTIONS = {
     0: "keep",
     1: "small_left",

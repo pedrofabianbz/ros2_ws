@@ -8,6 +8,133 @@ from typing import Optional
 import numpy as np
 
 
+"""
+eval_avoid_empty.py (ml/train/eval_avoid_empty.py)
+=================================================
+
+Qué hace
+--------
+Evaluador “ligero” para PPO que sirve tanto para:
+- entorno vacío (AvoidTrainEnv, típicamente obs_dim=7)
+- pasillo (AvoidCorridorTrainEnv, obs_dim=10)
+
+A diferencia de eval_avoid.py (el grande), este:
+- NO hace replay con render
+- NO saca métricas avanzadas de pared/CPA/overrides
+- sí reporta lo esencial: tasas (reach/collision/trunc), tiempos, clearance mínimo, cross-track
+- y distribuciones de acciones (RAW / EFFECTIVE / EXEC) en todos los pasos y solo cuando rl_active=True.
+
+Cómo decide el entorno
+----------------------
+Lee obs_dim desde model.observation_space:
+- si obs_dim == 10  -> crea AvoidCorridorTrainEnv (pasillo, 10D)
+- si no             -> crea AvoidTrainEnv (vacío, 7D)
+
+Ojo: si intentas evaluar un modelo 10D sin pasar half-width correcto, puedes sesgar resultados
+(si el modelo fue entrenado con pasillo fijo y aquí lo randomizas, etc.).
+
+Cómo se corre
+-------------
+1) Evaluar modelo en vacío (7D típico):
+   python3 -m train.eval_avoid_empty --model models/avoid_train.zip --episodes 200 --device cpu
+
+2) Evaluar modelo de pasillo (10D):
+   python3 -m train.eval_avoid_empty --model models/avoid_corridor_10d.zip \
+       --corridor-half-width 0.90 --episodes 300 --device cpu
+
+3) Política determinista:
+   python3 -m train.eval_avoid_empty --model models/xxx.zip --deterministic
+
+4) Randomizar ancho de pasillo (solo aplica si obs_dim==10 y usas el env de pasillo):
+   python3 -m train.eval_avoid_empty --model models/avoid_corridor_10d.zip \
+       --randomize-corridor --corridor-half-width 0.90
+
+Inputs (CLI)
+------------
+Obligatorio:
+- --model PATH
+
+Opcionales:
+- --episodes N                (default 200)
+- --deterministic             (si no, PPO.sample estocástico)
+- --p-mirror X                prob de mirroring por episodio (default 0.50)
+- --p-conflict X              prob de escenario conflictivo (default 0.85)
+- --max-steps N               (default 250)
+- --seed N                    semilla base para RNG de episodios (default 0)
+
+Solo si el modelo es de pasillo (obs_dim==10):
+- --corridor-half-width X     (default 0.90)
+- --randomize-corridor        randomiza el ancho por episodio (usa el env internamente)
+
+Device:
+- --device {cpu,cuda,auto}    recomendado: cpu para eval estable y reproducible
+
+Qué mide exactamente
+--------------------
+Por episodio:
+- reached / collision / truncated (desde info del env)
+- conflict y mirrored (desde info de reset)
+- dclear_min: mínimo clearance al dinámico:
+    dclear = d_dyn - (robot_radius + r_dyn)
+- cross_track: usa info["cross_track"] si existe (en pasillo suele existir; en vacío puede ser NaN)
+
+Por pasos:
+- cuenta acciones en tres “niveles”:
+  1) a_raw  : la acción que predice la política PPO
+  2) a_eff  : aquí la define como info["action_hold"] (si existe), si no a_raw
+             (nota: esta “effective” aquí NO es el mirror mapping explícito como en eval_avoid.py)
+  3) a_exec : info["action_exec"] (si existe), si no a_eff
+- mismatch_eff_exec_steps: cuenta cuántos pasos a_eff != a_exec
+  => proxy de cuántas veces el entorno “te corrigió” (overrides/guards/etc.).
+
+Agregados impresos
+------------------
+- mirror_rate, conflict_rate
+- reach_rate, collision_rate, truncated_rate
+- avg_steps_to_end, avg_time_to_end (dt del env)
+- mismatch_eff_vs_exec_rate = mismatch_eff_exec_steps / steps_with_actions
+- cross-track mean/max promedio por episodio (nanmean)
+- avg_obstacle_clearance_min (nanmean)
+
+- Distribución de acciones (porcentaje y conteos) en:
+  - all steps
+  - rl_active steps only
+
+Diferencias importantes vs eval_avoid.py
+----------------------------------------
+- Aquí NO hay:
+  - breakdown de pared (wall_dist_min, wall_pen_sum, wall_touch_rate, etc.)
+  - breakdown de overrides (CPA, wall_hard_brake, trap-wall)
+  - replays con render + logs
+
+- Aquí SÍ hay algo útil y rápido:
+  - clearance mínimo medio
+  - cross-track como “se abre”
+  - y action histograms simples
+
+Detalles/quirks a tener en cuenta
+---------------------------------
+1) “effective action”:
+   En este script la toma de `info["action_hold"]`.
+   Eso captura decimation/hold, pero NO aplica explícitamente mirror_action().
+   Si tu env hace mirror internamente y expone la acción espejada en info, perfecto;
+   si no, esta métrica puede no coincidir con el “effective” de eval_avoid.py.
+
+2) cross_track en vacío:
+   Si AvoidTrainEnv no calcula cross_track, te saldrá NaN y el nanmean lo ignora.
+
+3) Clearance:
+   Está en metros “por encima de contacto”:
+   - dclear_min ~ 0 => casi tocó
+   - dclear_min < 0 => se superpuso (posible si info d_dyn laggea o si sum_r no coincide exacto)
+
+En una frase
+------------
+Un “smoke test” rápido: te dice si el modelo llega, choca, cuánto tarda, qué tan cerca pasa del obstáculo,
+cuánto se “abre” (cross-track) y qué acciones realmente terminan ejecutándose.
+"""
+
+
 @dataclass
 class Counters:
     episodes: int = 0

@@ -11,6 +11,94 @@ from sim.training.env_avoid_corridor_train import AvoidCorridorTrainEnv
 
 START_MODEL_PATH = "/home/pedro/ros2_ws/src/my_robot_sim/ml/models/avoid_corridor_continue_10d_trapwall.zip"
 
+"""
+train_avoid.py (ml/train/train_avoid.py)
+=======================================
+
+Qué hace
+--------
+Script de entrenamiento (o *fine-tuning*) con Stable-Baselines3 **PPO** para la política discreta
+de evasión en pasillo usando el entorno:
+
+    sim.training.env_avoid_corridor_train.AvoidCorridorTrainEnv
+
+Este archivo está pensado para **continuar** entrenamiento desde un modelo previo (`START_MODEL_PATH`)
+y mejorar comportamiento sin “olvidar” lo ya aprendido, guardando:
+
+- Checkpoints periódicos en `ml/models/`
+- Logs de TensorBoard en `ml/tb_avoid/`
+- El “best model” según evaluación en `ml/models/`
+
+Cómo se corre
+-------------
+Desde la carpeta `ml/` (recomendado):
+
+    python3 -m train.train_avoid
+
+(o equivalente si lo ejecutas directo, según tu PYTHONPATH).
+
+Requisitos:
+- `stable-baselines3`, `gymnasium`, `torch`
+- Tu repo debe resolver imports de `sim.*`
+
+Inputs (configurables en el archivo)
+------------------------------------
+1) START_MODEL_PATH
+   Ruta al `.zip` del modelo PPO desde el que vas a continuar.
+
+2) make_env(train=True/False)
+   Crea instancias del entorno con hiperparámetros específicos:
+   - `train=True`: más augment (p_mirror alto), distribución de escenarios para aprender robustez.
+   - `train=False`: eval con p_mirror un poco menor (más “realista” y estable como métrica).
+
+3) n_envs
+   Número de entornos paralelos (DummyVecEnv). Aquí: `n_envs = 8`.
+
+4) Hiperparámetros PPO ajustados para “mejorar sin destruir”:
+   - learning_rate: constante baja (2.5e-5)
+   - ent_coef: 0.0025 (sube exploración, empuja a steering y evita colapso a brake)
+   - clip_range: 0.10 (updates conservadores)
+   - target_kl: 0.02 (freno anti-cambios bruscos)
+
+Qué está entrenando exactamente
+-------------------------------
+- Acción: Discrete(7) (keep/steer/brake/boost) definida por el env.
+- Observación: 10D (porque `use_corridor_obs=True`).
+- El env incluye gating `rl_active` y shaping/overrides (CPA, trap-wall, front-conflict, anti-runover, etc.).
+  O sea: PPO aprende “correcciones” y el entorno fuerza seguridad/consistencia.
+
+Callbacks / outputs generados
+-----------------------------
+1) CheckpointCallback
+   - `save_freq=50_000` pasos de entrenamiento
+   - Guarda en `models/` con prefijo:
+       avoid_corridor_continue_10d_round4_front_*.zip
+
+2) EvalCallback
+   - Evalúa cada `eval_freq=25_000` pasos
+   - Corre `n_eval_episodes=25`
+   - Guarda el mejor modelo en `models/` (best_model_save_path)
+   - Loguea métricas en `tb_avoid/`
+
+3) TensorBoard
+   - `tensorboard_log="tb_avoid"`
+   Luego puedes ver:
+       tensorboard --logdir tb_avoid
+
+Salida final:
+-------------
+Al terminar `model.learn(...)`, guarda el modelo final en:
+
+    models/avoid_corridor_continue_10d_round4_front.zip
+
+y lo imprime por consola.
+
+En una frase
+------------
+Este script levanta 8 entornos de pasillo, carga un PPO ya entrenado y lo sigue entrenando con
+updates suaves + evaluación periódica, dejando checkpoints y trazas para TensorBoard.
+"""
+
 
 def const_schedule(val: float) -> Callable[[float], float]:
     v = float(val)

@@ -11,19 +11,99 @@ from ..core.render_utils import render_world
 
 class AvoidTrainEnv(gym.Env):
     """
-    Entrenamiento navegación + evitación (discreto).
+    AvoidDynEnv (env_avoid_train.py / AvoidDynEnv)
+    =============================================
 
-    FIX MIRROR (IMPORTANTE):
-    - El mundo puede estar "mirrored" internamente (y->-y, theta->-theta, vy->-vy).
-    - PERO el agente SIEMPRE ve observaciones CANÓNICAS (des-mirror de obs).
-    - La acción del agente es CANÓNICA. Si el mundo está mirrored, se REMAPEA acción (L<->R)
-      para ejecutar en el mundo, de modo que (obs_can, a_can, obs'_can) sea consistente.
+    Qué hace
+    --------
+    Entorno Gymnasium para entrenar evitación de colisión con **un (1) obstáculo dinámico**.
+    Está pensado como un “sandbox” simple de evasión:
 
-    NUEVO (PASS + BLOQUEO):
-    - Pass shaping: bonifica cuando el robot "rebasa" al obstáculo (pasa de estar adelante a estar atrás).
-    - Blocked penalty: castiga quedarse "pegado" con obstáculo adelante y casi paralelo sin progreso.
-      (y castiga boost si insiste estando bloqueado).
+    - Robot diferencial (modelo unicycle) con límites de velocidad y *rate limiting* (aceleraciones máximas).
+    - Obstáculo dinámico circular con velocidad constante y rebote dentro de un cuadrado (`world_limit`).
+    - NO usa LiDAR: la observación asume que conoces (o estimas) el estado relativo del obstáculo.
+    - Mundo estático opcional cargado desde un mapa SDF mediante `World2D` (principalmente para render).
+
+    Cómo se corre / cómo se usa
+    ---------------------------
+    Este archivo normalmente NO se ejecuta solo: se instancia desde un script de entrenamiento (PPO)
+    o desde un script de “play/debug”.
+
+    Ejemplo mínimo en Python (pseudo-uso):
+
+        env = AvoidDynEnv(sdf_world="worlds/diff_drive_empty.sdf", render_mode="human", seed=0)
+        obs, _ = env.reset()
+        for _ in range(200):
+            a = env.action_space.sample()
+            obs, r, terminated, truncated, info = env.step(a)
+            env.render()
+            if terminated or truncated:
+                obs, _ = env.reset()
+
+    Inputs principales (constructor)
+    --------------------------------
+    - sdf_world: ruta al mapa `.sdf` (puede ser None). Se carga con `World2D`.
+    - risk_radius: radio de “zona de riesgo” (m). Dentro de este radio se penaliza cercanía.
+    - world_limit: límites del cuadrado [-L, L] para rebote del dinámico (solo “empty”).
+    - max_steps: límite de pasos por episodio (truncamiento).
+    - render_mode: "human" para dibujar con Matplotlib, o None para entrenamiento rápido.
+    - seed: semilla para reproducibilidad.
+
+    Acciones (Discrete(4))
+    ----------------------
+    Acción discreta `a ∈ {0,1,2,3}` que se traduce a comandos (v_cmd, w_cmd):
+
+    - 0: avanzar lento        -> (0.2,  0.0)
+    - 1: esquivar izquierda    -> (0.2, +1.0)
+    - 2: esquivar derecha      -> (0.2, -1.0)
+    - 3: frenar / detener      -> (0.0,  0.0)
+
+    Observación (Box, 6D)
+    ---------------------
+    Estado observado: `[d, cos(alpha), sin(alpha), v, w, v_closing]`
+
+    - d: distancia robot–dinámico (centro-a-centro).
+    - alpha: ángulo del dinámico en el marco del robot.
+    - v, w: velocidades actuales del robot.
+    - v_closing: velocidad de cierre aproximada (proyección de velocidad relativa sobre la línea de visión).
+    Convención en este env: v_closing < 0 significa que se acerca, > 0 que se aleja.
+
+    Rewards y terminales
+    --------------------
+    - Reward base por “seguir vivo”: +1.0 por paso.
+    - Penalización por cercanía dentro de `risk_radius`:
+        reward -= (risk_radius - d) * 4.0
+    - Penalización por frenar (acción 3): -0.05
+    - Colisión (terminal): reward = -100.0, terminated=True
+
+    Condición de colisión:
+    - collision = (distancia centro-a-centro <= robot_radius + r_dyn)
+
+    Outputs de step()
+    -----------------
+    Devuelve tupla estándar Gymnasium:
+
+        obs, reward, terminated, truncated, info
+
+    - terminated: True si hubo colisión.
+    - truncated: True si se alcanzó `max_steps`.
+    - info: diccionario con:
+        - "d_dyn": distancia actual al dinámico
+        - "collision": bool
+
+    Render
+    ------
+    Si `render_mode="human"`, dibuja el mundo/robot/dinámico con `render_world(...)` usando Matplotlib.
+    Para entrenamiento masivo, deja `render_mode=None` (acelera bastante).
+
+    Notas rápidas
+    -------------
+    - El mundo estático cargado por SDF se usa sobre todo para visualización; la dinámica del obstáculo
+    se maneja internamente en el env.
+    - Si más adelante quieres hacerlo más “realista”, típicamente se randomiza `v_dyn`, se agregan
+    varios dinámicos o se cambia la observación para no “regalar” el estado exacto.
     """
+
 
     metadata = {"render_modes": ["human"], "render_fps": 20}
 

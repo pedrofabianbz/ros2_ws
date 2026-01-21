@@ -16,6 +16,87 @@ from sim.core.world import World2D
 Point2 = Tuple[float, float]
 Rect = Tuple[float, float, float, float]  # xmin, ymin, xmax, ymax
 
+"""
+prm_interactive.py
+==================
+
+Qué hace
+--------
+Script interactivo (con Matplotlib) para demostrar la arquitectura de navegación híbrida:
+
+1) Construye un PRM (Probabilistic Roadmap) sobre obstáculos estáticos del mapa (.sdf).
+2) Planea una ruta global con A* entre START=(0,0) y un GOAL que seleccionas con click.
+3) Ejecuta la ruta con un seguidor nominal Pure Pursuit.
+4) (Opcional) Integra una política PPO discreta de evasión local:
+   - La política SOLO interviene cuando hay riesgo con obstáculos dinámicos.
+   - La activación principal es por distancia centro-a-centro (d_center) con histéresis.
+   - Opcionalmente se puede reforzar la activación con TTC.
+
+Cómo se corre
+-------------
+Desde la carpeta `ml/` (o usando `-m` desde el workspace):
+
+  # Solo PRM + Pure Pursuit (sin RL)
+  python3 -m run.prm_interactive
+
+  # Con RL (carga modelo PPO .zip)
+  python3 -m run.prm_interactive --rl-model models/<modelo>.zip
+
+Flujo de uso en la UI
+---------------------
+- Selecciona el WORLD (.sdf) desde la terminal.
+- Click en el mapa para fijar GOAL.
+- Teclas:
+  B = construir PRM (cache)
+  P = planear ruta con A*
+  F = seguir ruta (Pure Pursuit, con RL si está activo)
+  T = mostrar/ocultar PRM
+  S = guardar ruta a JSON
+  R = reset (volver a seleccionar world)
+  ESC = salir
+
+Inputs principales (CLI)
+------------------------
+--worlds-dir <dir>        Carpeta con archivos .sdf (default: "worlds")
+--out <path>              Archivo JSON de salida al guardar (default: "integration/path_click.json")
+
+PRM:
+--n-samples <int>         Número de muestras del PRM (default: 800)
+--k <int>                 Vecinos por nodo (default: 12)
+--clearance <float>       Inflado de obstáculos estáticos (default: 0.20)
+--edge-step <float>       Paso de discretización en validación de aristas (default: 0.05)
+--world-limit <float>     Límite cuadrado de muestreo [-L, L] (default: 12.0)
+--seed <int>              Semilla de muestreo (default: 123)
+
+Dinámicos:
+--dyn X Y R VX VY         Agrega un obstáculo dinámico (puede repetirse varias veces)
+
+RL (opcional):
+--rl-model <path>         Ruta al modelo PPO (.zip)
+--rl-device cpu|cuda|auto Dispositivo para inferencia (default: cpu)
+--rl-activate <m>         Activa RL si d_center <= umbral (default: 1.2)
+--rl-deactivate <m>       Desactiva RL si d_center >= umbral (default: 1.4)
+--lookahead <m>           Lookahead nominal Pure Pursuit (default: 1.3)
+--lookahead-rl <m>        Lookahead cuando RL está activo (default: 0.9)
+--ttc-activate <s>        Activa RL si TTC <= umbral (default: 1.2)
+--no-ttc-gate             Desactiva la activación por TTC (solo por distancia)
+
+Outputs
+-------
+1) Visualización en tiempo real:
+   - Obstáculos estáticos, PRM (opcional), ruta planeada, trayectoria ejecutada
+   - Segmentos en modo nominal vs modo RL (si RL está activo)
+
+2) Archivo JSON (tecla S):
+   - world, start, goal, parámetros PRM y lista de waypoints del path.
+   - Ruta por defecto: integration/path_click.json
+
+Notas rápidas
+-------------
+- START está fijo en (0,0). Si cae en obstáculo inflado por clearance, debes bajar `--clearance`
+  o cambiar de mapa.
+- Si RL no carga (modelo inválido/ruta mala), el sistema sigue funcionando en modo nominal.
+"""
 
 # ---------------- PRM core (AABB rects) ----------------
 @dataclass
